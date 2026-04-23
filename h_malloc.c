@@ -1232,14 +1232,13 @@ static inline void enforce_init(void) {
     }
 }
 
-static struct mutex init_lock = MUTEX_INITIALIZER;
-
 COLD static void init_slow_path(void) {
+    static struct mutex lock = MUTEX_INITIALIZER;
 
-    mutex_lock(&init_lock);
+    mutex_lock(&lock);
 
     if (unlikely(is_init())) {
-        mutex_unlock(&init_lock);
+        mutex_unlock(&lock);
         return;
     }
 
@@ -1324,7 +1323,7 @@ COLD static void init_slow_path(void) {
     }
     memory_set_name(&ro, sizeof(ro), "malloc read-only after init");
 
-    mutex_unlock(&init_lock);
+    mutex_unlock(&lock);
 
     // may allocate, so wait until the allocator is initialized to avoid deadlocking
     if (unlikely(pthread_atfork(full_lock, full_unlock, post_fork_child))) {
@@ -2214,22 +2213,18 @@ COLD EXPORT int h_malloc_set_state(UNUSED void *state) {
 #ifdef __ANDROID__
 COLD EXPORT void h_malloc_disable_memory_tagging(void) {
 #ifdef HAS_ARM_MTE
-    mutex_lock(&init_lock);
+    init();
+    full_lock();
     if (!ro.is_memtag_disabled) {
-        if (is_init()) {
-            if (unlikely(memory_protect_rw(&ro, sizeof(ro)))) {
-                fatal_error("failed to unprotect allocator data");
-            }
-            ro.is_memtag_disabled = true;
-            if (unlikely(memory_protect_ro(&ro, sizeof(ro)))) {
-                fatal_error("failed to protect allocator data");
-            }
-        } else {
-            // bionic calls this function very early in some cases
-            ro.is_memtag_disabled = true;
+        if (unlikely(memory_protect_rw(&ro, sizeof(ro)))) {
+            fatal_error("failed to unprotect allocator data");
+        }
+        ro.is_memtag_disabled = true;
+        if (unlikely(memory_protect_ro(&ro, sizeof(ro)))) {
+            fatal_error("failed to protect allocator data");
         }
     }
-    mutex_unlock(&init_lock);
+    full_unlock();
 #endif
 }
 #endif
